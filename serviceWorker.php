@@ -1,52 +1,74 @@
 <?php
 
 /**
- * Class ServiceWorker this class is designed to communicate with restful APIs
+ * Class ServiceWorker
+ * this class is designed to communicate with restful APIs
  * @author Dmytro Dzyuba <joomsend@gmail.com>
  * @created 15.08.2017
  * @license MIT
  */
-
-class ServiceWorker{
+class ServiceWorker
+{
 
     /**
      * @var string base path to the web service
      */
-    private $baseUrl;
+    protected $baseUrl;
 
     /**
-     * @var callable the thing which parse the response from server
+     * @var string specify
      */
-    private $responseParser;
+    protected $contentType = 'autodetect';
+
+    /**
+     * @var resource curl link
+     */
+    private $curlHandler;
+
+    /**
+     * @var array some specific headers, that user wants to send, for example authentication keys
+     */
+    protected $customHeaders;
+
+    /**
+     * @var callable logger
+     */
+    protected $logger;
 
     /**
      * @var string request method name
      * Supported methods: GET, POST, PUT, DELETE
      */
-    private $method;
+    protected $method;
+    /**
+     * @var int time in seconds. Maximum request time
+     */
+    protected $timeout = 30;
 
     /**
-     * @var callable logger
+     * ServiceWorker constructor.
+     *
+     * @param string $baseUrl base url of the API
      */
-    private $logger;
-
-    /**
-     * @var array some specific headers, that user wants to send, for example authentication keys
-     */
-    private $customHeaders;
-
-    /**
-     * @var int time in seconds. Maximum request time.
-     */
-    private $timeout;
-
     public function __construct($baseUrl)
     {
         $this->baseUrl = $baseUrl;
     }
 
     /**
-     * Builds url
+     * ServiceWorker destructor.
+     * Close curl connection if it wasn't closed.
+     */
+    public function __destruct()
+    {
+        if (!empty($this->curlHandler)) {
+            curl_close($this->curlHandler);
+            $this->curlHandler = null;
+        }
+    }
+
+    /**
+     * Builds url.
      *
      * @param string $baseUrl any URL
      * @param array $searchParams request parameters
@@ -54,8 +76,8 @@ class ServiceWorker{
      */
     protected function buildUrl($baseUrl, $searchParams = array())
     {
-        if ($this->method == 'GET'){
-            if (strstr($baseUrl, '?') && count($searchParams)){
+        if ($this->method == 'GET') {
+            if (strstr($baseUrl, '?') && count($searchParams)) {
                 list($baseUrl, $baseParams) = explode('?', $baseUrl);
                 parse_str($baseParams, $baseParams);
                 $searchParams = array_merge($baseParams, $searchParams);
@@ -66,142 +88,125 @@ class ServiceWorker{
         return $baseUrl;
     }
 
+    /**
+     * Perform a remote call.
+     *
+     * @param string $url url, which should be called
+     * @param array $data request parameters
+     * @return mixed response
+     */
+    public function call($url, $data = array())
+    {
+        $this->curlInit($url, $data);
+
+        $fullResponse = $this->sendRequest();
+
+        $response = $this->parseResponse($fullResponse);
+
+        return $response;
+    }
+
+    /**
+     * Removes initialized data.
+     */
     protected function cleanUp()
     {
-        /**
-         * @TODO implement later
-         */
-    }
-
-    public function create($data)
-    {
-        /**
-         * @TODO implement later
-         */
+        $this->method = null;
+        $this->customHeaders = null;
+        $this->timeout = 30;
+        $this->contentType = 'autodetect';
     }
 
     /**
+     * Creates new record.
      *
-     * @param string $rawResponse some string, that should be parsed
+     * @param array $data record fields
      * @return mixed
      */
-    public function defaultParser($rawResponse)
+    public function create($data)
     {
-        /**
-         * @TODO implement later
-         */
-        return $rawResponse;
-    }
-
-    public function delete($id, $searchParams = array())
-    {
-        /**
-         * @TODO implement later
-         */
-    }
-
-    public function getAll($searchParams = array())
-    {
-        $this->setMethod('GET');
-        $url = $this->buildUrl($searchParams);
-        $this->sendRequest($url);
-    }
-
-    public function getOne($id)
-    {
-        /**
-         * @TODO implement later
-         */
+        return $this->setMethod('POST')
+            ->call($this->baseUrl, $data);
     }
 
     /**
-     * Registers callable method or function for logging
+     * Initialize curl options.
      *
-     * @param callable $logger method or function which adds data to the log file
-     * @return ServiceWorker
-     */
-    public function registerLogger(callable $logger)
-    {
-        $this->logger = $logger;
-        return $this;
-    }
-
-    /**
-     * Register callable method of function for response parsing
-     *
-     * @param callable $responseParser method or function which parse the response
-     * @return ServiceWorker
-     */
-    public function registerParser(callable $responseParser){
-        $this->responseParser = $responseParser;
-        return $this;
-    }
-
-    /**
-     * Sets request method
-     * @param string $methodName
-     * @return ServiceWorker
-     * @throws ServiceWorkerException
-     */
-    private function setMethod($methodName)
-    {
-        $expectedMethod = array(
-            'GET', 'POST', 'PUT', 'DELETE'
-        );
-        $methodName = strtoupper($methodName);
-        if (!in_array($methodName, $expectedMethod)){
-            throw new ServiceWorkerException('Method ' . $methodName . ' is not supported.');
-        }
-        $this->method = $methodName;
-        return $this;
-    }
-
-    private function sendRequest($url, $searchParams = array())
-    {
-        /**
-         * @TODO implement later
-         */
-    }
-
-    public function update($data, $id){}
-
-    /**
      * @param string $url url, which should be called
      * @param array $data request parameters
      * @throws ServiceWorkerException in case of error
-     * @return resource
      */
-    protected function curlInit($url, $data)
+    protected function curlInit($url, $data = array())
     {
-        if (!$curlHandler = curl_init()){
+        if (!$curlHandler = curl_init()) {
             throw new ServiceWorkerException('Your php is configured without curl extension.');
         }
-        curl_setopt($curlHandler, CURLOPT_HEADER, true);
-        curl_setopt($curlHandler, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($curlHandler, CURLOPT_URL, $url);
+        curl_setopt($this->curlHandler, CURLOPT_HEADER, true);
+        curl_setopt($this->curlHandler, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($this->curlHandler, CURLOPT_URL, $url);
 
         if ($this->method == 'POST') {
-            curl_setopt($curlHandler, CURLOPT_POST, true);
-            curl_setopt($curlHandler, CURLOPT_POSTFIELDS, $data);
+            curl_setopt($this->curlHandler, CURLOPT_POST, true);
+            curl_setopt($this->curlHandler, CURLOPT_POSTFIELDS, $data);
         } elseif (in_array($this->method, array('PUT', 'DELETE'))) {
-            curl_setopt($curlHandler, CURLOPT_CUSTOMREQUEST, $this->method);
-            curl_setopt($curlHandler, CURLOPT_POSTFIELDS, http_build_query($data));
+            curl_setopt($this->curlHandler, CURLOPT_CUSTOMREQUEST, $this->method);
+            curl_setopt($this->curlHandler, CURLOPT_POSTFIELDS, http_build_query($data));
         }
 
-        $this->fileUpload($curlHandler);
+        $this->fileUpload($this->curlHandler);
 
         if (!empty($this->customHeaders)) {
-            curl_setopt($curlHandler, CURLOPT_HTTPHEADER, $this->customHeaders);
-        }
-        if (!is_null($this->timeout)) {
-            curl_setopt($curlHandler, CURLOPT_TIMEOUT, $this->timeout);
+            curl_setopt($this->curlHandler, CURLOPT_HTTPHEADER, $this->customHeaders);
         }
 
-        return $curlHandler;
+        if (!is_null($this->timeout)) {
+            curl_setopt($this->curlHandler, CURLOPT_TIMEOUT, $this->timeout);
+        }
+
+        $requestData = array(
+            'Url' => $url,
+            'Method' => $this->method,
+            'Data' => $data,
+            'Headers' => $this->customHeaders ? $this->customHeaders : ''
+        );
+
+        $this->logData('Send request.', $requestData);
     }
 
     /**
-     * Initialize file-uploading options in curl handler
+     * Deletes the record by ID or by additional parameters.
+     *
+     * @param int $id ID of the record
+     * @param array $searchParams search parameters
+     * @return mixed
+     */
+    public function delete($id = null, $searchParams = array())
+    {
+        $url = $this->baseUrl;
+
+        if (!is_null($id)) {
+            $url .= '/' . $id;
+        }
+
+        return $this->setMethod('DELETE')
+            ->call($url, $searchParams);
+    }
+
+    /**
+     * Doesn't parse the content. Returns raw result
+     * Can be extended for higher complexity
+     *
+     * @param string $rawContent raw response string
+     * @return mixed
+     */
+    public function defaultParser($rawContent)
+    {
+        return $rawContent;
+    }
+
+    /**
+     * Initialize file-uploading options in curl handler.
+     *
      * @param resource $curlHandler
      * @return ServiceWorker
      */
@@ -215,55 +220,254 @@ class ServiceWorker{
     }
 
     /**
-     * Perform a remote call
+     * Returns information about several records.
      *
-     * @param string $url url, which should be called
-     * @param array $data request parameters
-     * @return mixed response
-     */
-    public function call($url, $data = array())
-    {
-        $curlHandler = $this->curlInit(($url, $data);
-
-        $fullResponse = curl_exec($curlHandler);
-
-        $response = $this->parseResponse($curlHandler, $fullResponse);
-
-        curl_close($curlHandler);
-
-        return $response;
-    }
-    /**
-     * Build response based on the information from curl
-     * @param resource $curlHandler
-     * @param string $fullResponse
+     * @param array $searchParams search parameters
      * @return mixed
      */
-    protected function parseResponse($curlHandler, $fullResponse)
+    public function getAll($searchParams = array())
     {
-        /**
-         * @TODO implement logger here
-         */
+        $url = $this->buildUrl($this->baseUrl, $searchParams);
 
-        $responseInfo = curl_getinfo($curlHandler);
+        return $this->setMethod('GET')
+            ->call($url);
+    }
+
+    /**
+     * Returns information about 1 record by its ID.
+     *
+     * @param int $id ID of the record
+     * @return mixed
+     */
+    public function getOne($id)
+    {
+        $url = $this->baseUrl . '/' . $id;
+
+        return $this->setMethod('GET')
+            ->call($url);
+    }
+
+    /**
+     * Parse string as json.
+     *
+     * @param string $rawContent raw response string
+     * @return array|int parsed response
+     * @throws ServiceWorkerException
+     */
+    public function jsonParser($rawContent)
+    {
+        $content = json_decode($rawContent);
+        if (json_last_error() != JSON_ERROR_NONE) {
+            throw new ServiceWorkerException('Unable to parse json content. Error message: ' . json_last_error_msg());
+        }
+        return $content;
+    }
+
+    /**
+     * Log the message.
+     *
+     * @param string $message
+     * @param array $data additional parameters
+     * @return boolean true on success
+     */
+    public function logData($message, $data = array())
+    {
+        if (!empty($this->logger)) {
+            if (!empty($data)) {
+                $message .= " Parameters " . print_r($data, true);
+            }
+            call_user_func($this->logger, $message);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Check the response code.
+     * It could came more complex logic, e.g. different response code base on request method, but most of web services
+     * in my practice returned only 200 on success no matter what, so I keep it simple.
+     *
+     * @param array $responseInfo response parameters
+     * @return int response code
+     * @throws ServiceWorkerException on failure
+     */
+    protected function parseCode($responseInfo)
+    {
         $httpCode = $responseInfo['http_code'];
+        if ($httpCode != 200) {
+            throw new ServiceWorkerException('Server returned response code "' . $httpCode . '". Expected response code is 200.');
+        }
+        return $httpCode;
+    }
+
+    /**
+     * Detects in which way parse the content.
+     *
+     * @param string $rawContent raw response body
+     * @return mixed parsed response
+     */
+    public function parseContent($rawContent)
+    {
+        switch ($this->contentType) {
+            case 'json':
+                return $this->jsonParser($rawContent);
+            case 'xml':
+                return $this->xmlParser($rawContent);
+            case 'autodetect':
+                try {
+                    return $this->jsonParser($rawContent);
+                } catch (ServiceWorkerException $e) {
+                    try {
+                        return $this->xmlParser($rawContent);
+                    } catch (ServiceWorkerException $e) {
+                        return $this->defaultParser($rawContent);
+                    }
+                }
+            default:
+                return $this->defaultParser($rawContent);
+        }
+    }
+
+    /**
+     * Build response based on the information from curl.
+     *
+     * @param string $fullResponse response string which contains body and header
+     * @return mixed parsed response
+     */
+    protected function parseResponse($fullResponse)
+    {
+        $responseInfo = curl_getinfo($this->curlHandler);
+
         $headerSize = $responseInfo['header_size'];
 
-        $header = substr($fullResponse, 0, $headerSize);
+        $data = array(
+            'Response code' => $this->parseCode($responseInfo),
+            'Request time' => $responseInfo['total_time'],
+            'Response Url' => $responseInfo['url'],
+            'Response Headers' => substr($fullResponse, 0, $headerSize)
+        );
+
+        $this->logData('Successfully got the response.', $data);
+
         $body = substr($fullResponse, $headerSize);
 
-        $responseInfo['total_time'];
-        $responseInfo['url'];
-        if (curl_errno($curlHandler)) {
-            curl_error($curlHandler);
+        return $this->parseContent($body);
+    }
+
+    /**
+     * Sends the actual request.
+     *
+     * @return mixed raw response
+     * @throws ServiceWorkerException in case of failure
+     */
+    private function sendRequest()
+    {
+        $rawResponse = curl_exec($this->curlHandler);
+
+        if (curl_errno($this->curlHandler)) {
+            throw new ServiceWorkerException(curl_error($this->curlHandler));
         }
 
-        if ($this->responseParser){
-            $response = $this->responseParser($body);
-        } else {
-            $response = $this->defaultParser($body);
-        }
+        return $rawResponse;
+    }
 
-        return $response;
+    /**
+     * Sets content type.
+     *
+     * @param string $contentType Currently it supports json and xml. It can be autodetect to make the script decide.
+     * @return ServiceWorker
+     */
+    public function setContentType($contentType)
+    {
+        $this->contentType = $contentType;
+        return $this;
+    }
+
+    /**
+     * Sets custom headers.
+     *
+     * @param array $customHeaders you may need this if you send custom headers with keys for authentication
+     * @return ServiceWorker
+     */
+    public function setCustomHeaders($customHeaders)
+    {
+        $this->customHeaders = $customHeaders;
+        return $this;
+    }
+
+    /**
+     * Registers callable method or function for logging.
+     *
+     * @param callable $logger method or function which adds data to the log file
+     * @return ServiceWorker
+     */
+    public function setLogger(callable $logger)
+    {
+        $this->logger = $logger;
+        return $this;
+    }
+
+    /**
+     * Sets timeout.
+     *
+     * @param int $timeout maximum request time in seconds
+     * @return ServiceWorker
+     */
+    public function setTimeout($timeout)
+    {
+        $this->timeout = $timeout;
+        return $this;
+    }
+
+    /**
+     * Sets request method.
+     *
+     * @param string $methodName request method. Currently supported 'GET', 'POST', 'PUT' and 'DELETE'
+     * @return ServiceWorker
+     * @throws ServiceWorkerException
+     */
+    public function setMethod($methodName)
+    {
+        $expectedMethod = array(
+            'GET', 'POST', 'PUT', 'DELETE'
+        );
+        $methodName = strtoupper($methodName);
+        if (!in_array($methodName, $expectedMethod)) {
+            throw new ServiceWorkerException('Method ' . $methodName . ' is not supported.');
+        }
+        $this->method = $methodName;
+        return $this;
+    }
+
+    /**
+     * Updates the record by Id.
+     *
+     * @param array $data list of parameters to update
+     * @param int $id ID of the record
+     * @return mixed response
+     */
+    public function update($data, $id)
+    {
+        $url = $this->baseUrl . '/' . $id;
+
+        return $this->setMethod('PUT')
+            ->call($url, $data);
+    }
+
+    /**
+     * Parse string as xml.
+     *
+     * @param string $rawContent raw response string
+     * @return SimpleXMLElement parsed response
+     * @throws ServiceWorkerException
+     */
+    public function xmlParser($rawContent)
+    {
+        $content = simplexml_load_string($rawContent);
+        if (libxml_get_last_error() !== false) {
+            libxml_clear_errors();
+            throw new ServiceWorkerException('Unable to parse xml content.');
+        }
+        return $content;
     }
 }
